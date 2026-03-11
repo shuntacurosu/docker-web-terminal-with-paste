@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Docker Web Terminal</title>
+    <!-- xterm.js のスタイルとスクリプト -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-attach@0.9.0/lib/xterm-addon-attach.js"></script>
+    
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #0b0c10;
+            overflow: hidden;
+            font-family: 'Consolas', 'Courier New', monospace;
+            display: flex;
+            color: #c5c8c6;
+        }
+        #sidebar {
+            width: 250px;
+            background-color: #1a1b20;
+            border-right: 1px solid #333;
+            display: flex;
+            flex-direction: column;
+        }
+        #sidebar-header {
+            padding: 15px;
+            font-weight: bold;
+            border-bottom: 1px solid #333;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        #new-session-btn {
+            background-color: #45b82e;
+            color: #0b0c10;
+            border: none;
+            border-radius: 4px;
+            padding: 4px 8px;
+            cursor: pointer;
+            font-weight: bold;
+            font-family: inherit;
+        }
+        #new-session-btn:hover {
+            background-color: #55c83e;
+        }
+        #session-list {
+            flex-grow: 1;
+            overflow-y: auto;
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        .session-item {
+            padding: 10px 15px;
+            cursor: pointer;
+            border-bottom: 1px solid #222;
+        }
+        .session-item:hover {
+            background-color: #2a2b30;
+        }
+        .session-item.active {
+            background-color: #35363d;
+            border-left: 3px solid #45b82e;
+        }
+        #terminal-container {
+            flex-grow: 1;
+            height: 100%;
+            padding: 10px;
+            box-sizing: border-box;
+            background-color: #000;
+        }
+        .xterm-viewport {
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div id="sidebar">
+        <div id="sidebar-header">
+            <span>Tumx Sessions</span>
+            <button id="new-session-btn">+</button>
+        </div>
+        <ul id="session-list">
+            <!-- Sessions will be populated here -->
+        </ul>
+    </div>
+    <div id="terminal-container"></div>
+
+    <script>
+        // ターミナルの初期化
+        const term = new Terminal({
+            cursorBlink: true,
+            fontFamily: '"Consolas", "Courier New", monospace',
+            fontSize: 15,
+            theme: {
+                background: '#0b0c10',
+                foreground: '#c5c8c6',
+                cursor: '#45b82e'
+            }
+        });
+        
+        // リサイズ用アドオン
+        const fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+        
+        term.open(document.getElementById('terminal-container'));
+        fitAddon.fit();
+
+        window.addEventListener('resize', () => {
+            fitAddon.fit();
+        });
+
+        let socket = null;
+        let attachAddon = null;
+        let currentSession = 'main';
+
+        function connectToTerminal(sessionName) {
+            if (socket) {
+                // Remove previous attach addon to avoid multiple listeners
+                if (attachAddon) {
+                    try { attachAddon.dispose(); } catch (e) {}
+                }
+                socket.close();
+            }
+
+            currentSession = sessionName;
+            term.clear();
+            term.write(`\x1b[36mConnecting to session: ${sessionName}...\x1b[0m\r\n`);
+
+            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${wsProtocol}//${location.host}/?session=${encodeURIComponent(sessionName)}`;
+            socket = new WebSocket(wsUrl);
+
+            socket.onopen = () => {
+                attachAddon = new AttachAddon.AttachAddon(socket);
+                term.loadAddon(attachAddon);
+                term.focus();
+                
+                // Trigger an initial resize so the server knows the terminal dimensions
+                setTimeout(() => {
+                   if(socket.readyState === WebSocket.OPEN) {
+                       const dims = fitAddon.proposeDimensions();
+                       if(dims) {
+                           socket.send(JSON.stringify({type: 'resize', cols: dims.cols, rows: dims.rows}));
+                       }
+                   }
+                }, 500);
+            };
+
+            socket.onclose = () => {
+                term.write('\r\n\x1b[31mConnection closed.\x1b[0m\r\n');
+                updateSessions(); // Refresh list to see if session died
+            };
+        }
+
+        async function updateSessions() {
+            try {
+                const res = await fetch('/api/sessions');
+                const data = await res.json();
+                let sessions = data.sessions || [];
+                
+                if (sessions.length === 0) {
+                    sessions = ['main']; // Default fallback if no sessions exist
+                }
+
+                if (!sessions.includes(currentSession)) {
+                    // Try to fallback to the first available if current is dead
+                    if (sessions.length > 0) {
+                         currentSession = sessions[0];
+                    }
+                }
+
+                const listObj = document.getElementById('session-list');
+                listObj.innerHTML = '';
+                
+                sessions.forEach(s => {
+                    const li = document.createElement('li');
+                    li.className = `session-item ${s === currentSession ? 'active' : ''}`;
+                    li.textContent = s;
+                    li.onclick = () => {
+                        if (s !== currentSession) {
+                            connectToTerminal(s);
+                            updateSessions(); // re-render to update active class
+                        }
+                    };
+                    listObj.appendChild(li);
+                });
+            } catch (e) {
+                console.error("Failed to load sessions:", e);
+            }
+        }
+
+        document.getElementById('new-session-btn').onclick = () => {
+            const name = prompt("Enter new session name:", `session_${Date.now().toString().slice(-4)}`);
+            if (name && name.trim()) {
+                connectToTerminal(name.trim());
+                setTimeout(updateSessions, 500); // Give it a moment to create
+            }
+        };
+
+        // Initial setup
+        updateSessions();
+        connectToTerminal(currentSession);
+
+
+        // Ctrl+C / Ctrl+Shift+Cでのコピー操作サポート
+        term.attachCustomKeyEventHandler((arg) => {
+            if (arg.ctrlKey && arg.code === 'KeyC' && arg.type === 'keydown') {
+                const selection = term.getSelection();
+                if (selection) {
+                    try {
+                        document.execCommand('copy');
+                    } catch (e) {
+                        console.error('Copy failed', e);
+                    }
+                    return false; // SIGINTを防ぐ
+                }
+            }
+            return true;
+        });
+
+        // 画像データをサーバーにアップロードする処理
+        async function uploadImageBlob(blob) {
+            const formData = new FormData();
+            formData.append('image', blob);
+
+            try {
+                const res = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!res.ok) {
+                    throw new Error(`HTTP error! status: ${res.status}`);
+                }
+
+                const data = await res.json();
+                const imagePath = data.path;
+
+                // 【重要】
+                // ターミナル(tmux/bash)の現在の入力プロンプトに対して、対象ファイルのパス文字列を送信(自動タイピング)する。
+                // 前後にスペースを入れることで、既存のコマンドとくっつかないようにする
+                if (socket.readyState === WebSocket.OPEN) {
+                   socket.send(` @${imagePath} `);
+                }
+
+            } catch (err) {
+                console.error("Upload failed", err);
+                term.write('\x1b[2K\r');
+                term.write(`\x1b[31m✖ Image upload failed:\x1b[0m ${err.message}\r\n`);
+            }
+        }
+
+        // ペーストイベントの横取り処理
+        document.addEventListener("paste", async (e) => {
+            const clipboardData = e.clipboardData || window.clipboardData;
+            const items = clipboardData ? clipboardData.items : null;
+            let imageFound = false;
+
+            // 1. 標準の paste イベントから画像を探す
+            if (items) {
+                for (let i = 0; i < items.length; i++) {
+                    const item = items[i];
+                    if (item.kind === 'file' && item.type.startsWith('image/')) {
+                        imageFound = true;
+                        const blob = item.getAsFile();
+                        if (blob) {
+                            // イベントを横取りしてアップロード開始
+                            e.preventDefault();
+                            e.stopImmediatePropagation();
+                            uploadImageBlob(blob);
+                            return;
+                        }
+                    }
+                }
+            }
+
+            // 2. ブラウザ制限による空化対策 (Clipboard API フォールバック)
+            if (!imageFound && items && items.length === 0 && navigator.clipboard && navigator.clipboard.read) {
+                try {
+                    const clipboardItems = await navigator.clipboard.read();
+                    for (const clipboardItem of clipboardItems) {
+                        for (const type of clipboardItem.types) {
+                            if (type.startsWith('image/')) {
+                                const blob = await clipboardItem.getType(type);
+                                uploadImageBlob(blob);
+                                return;
+                            }
+                        }
+                    }
+                } catch (err) {
+                    console.warn("Clipboard fallback block:", err);
+                }
+            }
+        }, true);
+
+    </script>
+</body>
+</html>
