@@ -1,5 +1,5 @@
 {
-  "name": "image-terminal",
+  "name": "docker-web-terminal-with-paste",
   "version": "1.0.0",
   "description": "A web-based terminal with image paste support",
   "main": "server.js",
