@@ -2,6 +2,8 @@
 
 [🇺🇸 English](README.md) | [🇯🇵 日本語](README.ja.md)
 
+![Docker Web Terminal with Paste Banner](assets/banner.png)
+
 このプロジェクトは、ブラウザ上の `xterm.js` を経由して軽量な Docker ベースの Ubuntu 環境にアクセスできるWebターミナルです。ブラウザ上のクリップボードへの画像ペーストイベント (Ctrl+V) を横取りし、画像をDockerコンテナ内にアップロードした上で、ターミナルのプロンプトにそのファイルパスを自動で入力します。
 
 これにより、コンテナ内の `tmux` で実行されている [Claude Code](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview) などのツールとシームレスに対話することが可能になります。

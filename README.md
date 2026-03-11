@@ -2,6 +2,8 @@
 
 [🇺🇸 English](README.md) | [🇯🇵 日本語](README.ja.md)
 
+![Docker Web Terminal with Paste Banner](assets/banner.png)
+
 This project provides a lightweight, Docker-based Ubuntu environment accessible via a web browser using `xterm.js`. It intercepts clipboard image paste events (Ctrl+V) in the browser, uploads the image to the Docker container, and automatically inserts the file path into the terminal prompt. 
 
 This enables seamless interaction with tools like [Claude Code](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview) running inside the container through `tmux`.
